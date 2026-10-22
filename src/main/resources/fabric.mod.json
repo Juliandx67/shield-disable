@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "shieldbreaker",
+  "version": "${version}",
+  "name": "Shield Breaker",
+  "description": "Erkennt einen blockenden Gegner am Fadenkreuz, wechselt auf die Axt und disabled den Schild.",
+  "authors": ["Juliandx67"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.shieldbreaker.ShieldBreakerMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
