@@ -28,6 +28,8 @@ public class StunWeb implements ClientModInitializer {
 
     private enum Phase { IDLE, HIT2, WEB }
 
+    public static boolean busy = false; // true, solange das Macro läuft
+
     private static KeyBinding key;
     private Phase phase = Phase.IDLE;
     private PlayerEntity locked = null;
@@ -55,12 +57,15 @@ public class StunWeb implements ClientModInitializer {
         switch (phase) {
             case IDLE -> {
                 if (!pressed || mc.currentScreen != null) return;
-                if (!p.getMainHandStack().isIn(ItemTags.SWORDS)) return;
                 if (findSlot(p, true) < 0 || findSlot(p, false) < 0) return;
+                int sword = findSwordSlot(p);
+                if (sword < 0) return;
                 PlayerEntity t = findTarget(mc, p);
                 if (t == null) return;
 
-                swordSlot = p.getInventory().getSelectedSlot();
+                swordSlot = sword;
+                p.getInventory().setSelectedSlot(sword);
+                busy = true;
                 attack(mc, p, t);            // Klick 1: Schwert
                 locked = t;
                 delay = CLICK_DELAY;
@@ -79,7 +84,7 @@ public class StunWeb implements ClientModInitializer {
             case WEB -> {
                 if (!valid(p) || --timeout <= 0) { abort(p); return; }
                 BlockPos feet = locked.getBlockPos();
-                if (mc.world.getBlockState(feet).isOf(Blocks.COBWEB)) { abort(p); return; } // sitzt, zurück
+                if (mc.world.getBlockState(feet).isOf(Blocks.COBWEB)) { abort(p); return; }
 
                 int web = findSlot(p, false);
                 if (web < 0) { abort(p); return; }
@@ -94,7 +99,6 @@ public class StunWeb implements ClientModInitializer {
         p.swingHand(Hand.MAIN_HAND);
     }
 
-    // Sucht eine feste Fläche neben dem Ziel-Block und setzt das Web hinein
     private void placeWeb(MinecraftClient mc, ClientPlayerEntity p, BlockPos feet) {
         if (!mc.world.getBlockState(feet).isReplaceable()) return;
 
@@ -133,14 +137,21 @@ public class StunWeb implements ClientModInitializer {
         return best;
     }
 
-    // Immer zurück aufs Schwert und alles zurücksetzen
     private void abort(ClientPlayerEntity p) {
         if (swordSlot >= 0) p.getInventory().setSelectedSlot(swordSlot);
         phase = Phase.IDLE;
+        busy = false;
         locked = null;
         swordSlot = -1;
         delay = 0;
         timeout = 0;
+    }
+
+    private int findSwordSlot(ClientPlayerEntity p) {
+        for (int i = 0; i < 9; i++) {
+            if (p.getInventory().getStack(i).isIn(ItemTags.SWORDS)) return i;
+        }
+        return -1;
     }
 
     private int findSlot(ClientPlayerEntity p, boolean axe) {
@@ -151,4 +162,3 @@ public class StunWeb implements ClientModInitializer {
         return -1;
     }
 }
-
