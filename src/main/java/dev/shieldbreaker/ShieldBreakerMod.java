@@ -65,6 +65,7 @@ public class ShieldBreakerMod implements ClientModInitializer {
     }
 
     private void onTick(MinecraftClient client) {
+                if (StunWeb.busy) { previousSlot = -1; axeSlot = -1; waitTicks = 0; return; }
         ClientPlayerEntity player = client.player;
         if (!enabled || player == null || client.world == null
                 || client.interactionManager == null || client.currentScreen != null) {
