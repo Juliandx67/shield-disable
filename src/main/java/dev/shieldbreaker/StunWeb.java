@@ -24,7 +24,8 @@ public class StunWeb implements ClientModInitializer {
     private static final double MAX_DIST = 4.0;
     private static final double MIN_AIM = 0.80;
     private static final double REACH = 4.5;
-    private static final int CLICK_DELAY = 1; // Ticks zwischen Klick 1 und Klick 2
+    private static final int CLICK_DELAY = 1;   // Ticks zwischen Klick 1 und Klick 2
+    private static final int PAUSE_AFTER = 20;  // Pause nach dem Macro (20 Ticks = 1 s)
 
     private enum Phase { IDLE, HIT2, WEB }
 
@@ -36,6 +37,7 @@ public class StunWeb implements ClientModInitializer {
     private int swordSlot = -1;
     private int delay = 0;
     private int timeout = 0;
+    private int pause = 0;
 
     @Override
     public void onInitializeClient() {
@@ -47,27 +49,43 @@ public class StunWeb implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
     }
 
+    // Axt und Cobweb in der Hotbar? Dann übernimmt Stunweb den Shieldbreak.
+    public static boolean hasSetup(ClientPlayerEntity p) {
+        return findSlot(p, true) >= 0 && findSlot(p, false) >= 0;
+    }
+
     private void tick(MinecraftClient mc) {
         ClientPlayerEntity p = mc.player;
         if (p == null || mc.world == null || mc.interactionManager == null) return;
 
         boolean pressed = false;
         while (key.wasPressed()) pressed = true;
+        if (pause > 0) pause--;
 
         switch (phase) {
             case IDLE -> {
-                if (!pressed || mc.currentScreen != null) return;
-                if (findSlot(p, true) < 0 || findSlot(p, false) < 0) return;
-                int sword = findSwordSlot(p);
-                if (sword < 0) return;
-                PlayerEntity t = findTarget(mc, p);
+                if (mc.currentScreen != null || !hasSetup(p)) return;
+
+                PlayerEntity t = null;
+                if (pressed) {
+                    t = findTarget(mc, p);
+                } else if (pause == 0 && !(p.fallDistance > 1.5 && hasMace(p))
+                        && mc.targetedEntity instanceof PlayerEntity c
+                        && c != p && c.isBlocking() && p.distanceTo(c) <= MAX_DIST) {
+                    t = c;
+                }
                 if (t == null) return;
 
-                swordSlot = sword;
-                p.getInventory().setSelectedSlot(sword);
+                int sword = findSwordSlot(p);
                 busy = true;
-                attack(mc, p, t);            // Klick 1: Schwert
                 locked = t;
+                if (sword >= 0) {
+                    swordSlot = sword;
+                    p.getInventory().setSelectedSlot(sword);
+                    attack(mc, p, t);        // Klick 1: Schwert
+                } else {
+                    swordSlot = p.getInventory().getSelectedSlot(); // ohne Schwert: nur Axt
+                }
                 delay = CLICK_DELAY;
                 phase = Phase.HIT2;
             }
@@ -76,20 +94,32 @@ public class StunWeb implements ClientModInitializer {
                 if (--delay > 0) return;
                 int axe = findSlot(p, true);
                 if (axe < 0) { abort(p); return; }
+
                 p.getInventory().setSelectedSlot(axe);   // Attribute Swap
                 attack(mc, p, locked);                   // Klick 2: Axt
+
+                // Blick schon jetzt nach unten drehen, damit er vor dem Web beim Server ist
+                BlockPos feet = locked.getBlockPos();
+                BlockHitResult h = findPlacement(mc, p, feet);
+                lookAt(p, h != null ? h.getPos() : Vec3d.ofCenter(feet.down()).add(0, 0.5, 0));
+
                 phase = Phase.WEB;
-                timeout = 6;
+                timeout = 8;
             }
             case WEB -> {
                 if (!valid(p) || --timeout <= 0) { abort(p); return; }
                 BlockPos feet = locked.getBlockPos();
-                if (mc.world.getBlockState(feet).isOf(Blocks.COBWEB)) { abort(p); return; }
+                if (mc.world.getBlockState(feet).isOf(Blocks.COBWEB)) { abort(p); return; } // sitzt
+
+                BlockHitResult h = findPlacement(mc, p, feet);
+                if (h == null) return; // noch keine Fläche, nächster Tick
 
                 int web = findSlot(p, false);
                 if (web < 0) { abort(p); return; }
+                lookAt(p, h.getPos());
                 p.getInventory().setSelectedSlot(web);
-                placeWeb(mc, p, feet);
+                mc.interactionManager.interactBlock(p, Hand.MAIN_HAND, h);
+                p.swingHand(Hand.MAIN_HAND);
             }
         }
     }
@@ -99,10 +129,11 @@ public class StunWeb implements ClientModInitializer {
         p.swingHand(Hand.MAIN_HAND);
     }
 
-    private void placeWeb(MinecraftClient mc, ClientPlayerEntity p, BlockPos feet) {
-        if (!mc.world.getBlockState(feet).isReplaceable()) return;
+    // Sucht eine feste Fläche neben dem Ziel-Block, auf die das Web gesetzt werden kann
+    private BlockHitResult findPlacement(MinecraftClient mc, ClientPlayerEntity p, BlockPos feet) {
+        if (!mc.world.getBlockState(feet).isReplaceable()) return null;
 
-        for (Direction d : Direction.values()) {
+        for (Direction d : Direction.values()) { // zuerst unten, dann oben, dann Seiten
             BlockPos support = feet.offset(d);
             if (mc.world.getBlockState(support).isReplaceable()) continue;
             if (p.getEyePos().distanceTo(Vec3d.ofCenter(support)) > REACH) continue;
@@ -110,11 +141,18 @@ public class StunWeb implements ClientModInitializer {
             Direction face = d.getOpposite();
             Vec3d hitPos = Vec3d.ofCenter(support).add(
                     face.getOffsetX() * 0.5, face.getOffsetY() * 0.5, face.getOffsetZ() * 0.5);
-            BlockHitResult hit = new BlockHitResult(hitPos, face, support, false);
-            mc.interactionManager.interactBlock(p, Hand.MAIN_HAND, hit);
-            p.swingHand(Hand.MAIN_HAND);
-            return;
+            return new BlockHitResult(hitPos, face, support, false);
         }
+        return null;
+    }
+
+    // Blick direkt auf einen Punkt drehen
+    private void lookAt(ClientPlayerEntity p, Vec3d pos) {
+        Vec3d eye = p.getEyePos();
+        double dx = pos.x - eye.x, dy = pos.y - eye.y, dz = pos.z - eye.z;
+        double flat = Math.sqrt(dx * dx + dz * dz);
+        p.setYaw((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
+        p.setPitch((float) -Math.toDegrees(Math.atan2(dy, flat)));
     }
 
     private boolean valid(ClientPlayerEntity p) {
@@ -145,16 +183,24 @@ public class StunWeb implements ClientModInitializer {
         swordSlot = -1;
         delay = 0;
         timeout = 0;
+        pause = PAUSE_AFTER;
     }
 
-    private int findSwordSlot(ClientPlayerEntity p) {
+    private static boolean hasMace(ClientPlayerEntity p) {
+        for (int i = 0; i < 9; i++) {
+            if (p.getInventory().getStack(i).isOf(Items.MACE)) return true;
+        }
+        return false;
+    }
+
+    private static int findSwordSlot(ClientPlayerEntity p) {
         for (int i = 0; i < 9; i++) {
             if (p.getInventory().getStack(i).isIn(ItemTags.SWORDS)) return i;
         }
         return -1;
     }
 
-    private int findSlot(ClientPlayerEntity p, boolean axe) {
+    private static int findSlot(ClientPlayerEntity p, boolean axe) {
         for (int i = 0; i < 9; i++) {
             ItemStack s = p.getInventory().getStack(i);
             if (axe ? s.isIn(ItemTags.AXES) : s.isOf(Items.COBWEB)) return i;
