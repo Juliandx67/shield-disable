@@ -27,6 +27,7 @@ public class StunSlam implements ClientModInitializer {
     private void tick(MinecraftClient mc) {
         ClientPlayerEntity p = mc.player;
         if (p == null || mc.world == null || mc.interactionManager == null || mc.currentScreen != null) return;
+                if (StunWeb.busy) return;
 
         int axe = findSlot(p, true), mace = findSlot(p, false);
         if (axe < 0 || mace < 0) { reset(); return; }
