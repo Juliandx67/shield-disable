@@ -127,9 +127,8 @@ public class StunWeb implements ClientModInitializer {
     }
 
     // Der Block, in dem der Gegner mit seiner Mitte auf Fußhöhe steht
-    private BlockPos targetBlock() {
-        Vec3d pos = locked.getPos();
-        return BlockPos.ofFloored(pos.x, pos.y + 0.05, pos.z);
+       private BlockPos targetBlock() {
+        return BlockPos.ofFloored(locked.getX(), locked.getY() + 0.05, locked.getZ());
     }
 
     // Berührt die Hitbox des Gegners irgendein Cobweb?
