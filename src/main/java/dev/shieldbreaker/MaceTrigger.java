@@ -25,7 +25,7 @@ import java.util.Random;
  *                 /macetrigger sword           -> Schwert-Trigger an/aus
  *                 /macetrigger fall            -> Mace nur beim Fallen (Smash) an/aus
  *                 /macetrigger mobs            -> auch auf Mobs schlagen an/aus
- *                 /macetrigger charge <50-100> -> Mace schlägt ab so viel Prozent Aufladung
+ *                 /macetrigger charge <0-100>  -> Mace schlägt ab so viel Prozent Aufladung
  */
 public class MaceTrigger implements ClientModInitializer {
 
@@ -69,7 +69,7 @@ public class MaceTrigger implements ClientModInitializer {
                     return 1;
                 }))
                 .then(ClientCommandManager.literal("charge")
-                    .then(ClientCommandManager.argument("prozent", IntegerArgumentType.integer(50, 100))
+                    .then(ClientCommandManager.argument("prozent", IntegerArgumentType.integer(0, 100))
                         .executes(ctx -> {
                             maceCharge = IntegerArgumentType.getInteger(ctx, "prozent");
                             ctx.getSource().sendFeedback(Text.literal("Mace schlägt ab " + maceCharge + " % Aufladung"));
@@ -84,7 +84,7 @@ public class MaceTrigger implements ClientModInitializer {
         if (p == null || mc.world == null
                 || mc.interactionManager == null || mc.currentScreen != null) return;
 
-        if (StunWeb.busy) { lastTargetId = -1; jitter = -1; return; }
+        if (StunWeb.busy || StunSlam.busy || PearlCatch.busy) { lastTargetId = -1; jitter = -1; return; }
 
         // Welche Waffe hast du in der Hand, und ist dafür der Trigger an?
         boolean holdingMace = p.getMainHandStack().isOf(Items.MACE);
