@@ -12,6 +12,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.registry.tag.ItemTags;
+import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
@@ -35,19 +36,22 @@ public class StunWeb implements ClientModInitializer {
     private static final int MAX_AIM_TICKS = 4;    // nach so vielen Ticks wird das Web auf jeden Fall gesetzt
     private static final float AIM_TOLERANCE = 8f; // so nah (in Grad) muss die Kamera am Ziel sein
     private static final int PATH_TICKS = 6;       // so weit wird die Flugbahn vorausberechnet
-    private static final int[] ORDER = {2, 1, 3, 0, 4, 5, 6};
+    private static final int[] ORDER = {3, 2, 4, 1, 5, 0, 6}; // zuerst weiter hinten, dann näher
+    private static final int ARM_TICKS = 400;      // Stunweb bleibt 20 Sekunden bereit
 
     private enum Phase { IDLE, HIT2, WEB }
 
-    public static boolean busy = false; // true, solange das Macro läuft
+    public static boolean busy = false;   // true, solange das Macro läuft
+    public static boolean armed = false;  // true = der nächste Shieldbreak wird ein Stunweb
 
-    private static KeyBinding keyStun;  // Taste 3: Stunweb
-    private static KeyBinding keyHit;   // Mittlere Maustaste: Hit + Web
+    private static KeyBinding keyStun;    // Taste 3: Stunweb bereit machen
+    private static KeyBinding keyHit;     // Mittlere Maustaste: Hit + Web
 
     private final Random rnd = new Random();
     private Phase phase = Phase.IDLE;
     private PlayerEntity locked = null;
     private boolean stun = false;
+    private int armedTicks = 0;
     private int returnSlot = -1;
     private int delay = 0;
     private int timeout = 0;
@@ -87,40 +91,30 @@ public class StunWeb implements ClientModInitializer {
         if (phase != Phase.IDLE) hitAge++;
         doRestore(p);
 
+        if (pStun && mc.currentScreen == null) toggleArm(p);
+        if (armed && --armedTicks <= 0) {
+            armed = false;
+            p.sendMessage(Text.literal("Stunweb abgelaufen"), true);
+        }
+
         switch (phase) {
             case IDLE -> {
-                if ((!pStun && !pHit) || mc.currentScreen != null) return;
-                if (findSlot(p, false) < 0) return;          // Cobweb ist Pflicht
+                if (mc.currentScreen != null) return;
 
-                PlayerEntity t = findTarget(mc, p);
+                PlayerEntity t = null;
+                boolean stunMode = false;
+                if (pHit) {
+                    t = findTarget(mc, p);                       // Hit + Web
+                } else if (armed && mc.targetedEntity instanceof PlayerEntity c && c != p
+                        && c.isBlocking() && p.distanceTo(c) <= MAX_DIST) {
+                    t = c;                                       // nächster Shieldbreak wird Stunweb
+                    stunMode = true;
+                }
                 if (t == null) return;
+                if (findSlot(p, false) < 0) return;              // Cobweb ist Pflicht
 
-                busy = true;
-                restoring = false;
-                locked = t;
-                placed = 0;
-                aimTicks = 0;
-                stun = pStun && findSlot(p, true) >= 0;
-                jitA = (rnd.nextDouble() - 0.5) * 0.5;
-                jitB = (rnd.nextDouble() - 0.5) * 0.5;
-                saveView(p);
-
-                // Klick 1: Schwert (oder das Item in der Hand, falls kein Schwert da ist)
-                int sword = findSwordSlot(p);
-                if (sword >= 0) {
-                    returnSlot = sword;
-                    p.getInventory().setSelectedSlot(sword);
-                } else {
-                    returnSlot = p.getInventory().getSelectedSlot();
-                }
-                attack(mc, p, t);
-
-                if (stun) {
-                    delay = rnd.nextInt(4) == 0 ? 2 : 1;   // meist 1 Tick, manchmal 2
-                    phase = Phase.HIT2;
-                } else {
-                    startWebPhase();
-                }
+                if (stunMode) armed = false;
+                begin(mc, p, t, stunMode && findSlot(p, true) >= 0);
             }
             case HIT2 -> {
                 if (!valid(p)) { abort(p); return; }
@@ -143,7 +137,7 @@ public class StunWeb implements ClientModInitializer {
 
                 boolean aimed = stepAim(p, h.getPos());          // weich zielen
                 aimTicks++;
-                if (!aimed && aimTicks < (stun ? 2 : MAX_AIM_TICKS)) return;  // noch nicht nah genug
+                if (!aimed && aimTicks < (stun ? 2 : MAX_AIM_TICKS)) return;
 
                 int web = findSlot(p, false);
                 if (web < 0) { abort(p); return; }
@@ -153,6 +147,52 @@ public class StunWeb implements ClientModInitializer {
                 placed++;
                 aimTicks = 0;
             }
+        }
+    }
+
+    // Taste 3: Stunweb bereit machen oder wieder ausschalten
+    private void toggleArm(ClientPlayerEntity p) {
+        if (armed) {
+            armed = false;
+            p.sendMessage(Text.literal("Stunweb aus"), true);
+            return;
+        }
+        if (findSlot(p, false) < 0) {
+            p.sendMessage(Text.literal("Kein Cobweb in der Hotbar"), true);
+            return;
+        }
+        armed = true;
+        armedTicks = ARM_TICKS;
+        p.sendMessage(Text.literal("Stunweb bereit: der nächste Shieldbreak wird ein Stunweb"), true);
+    }
+
+    // Startet das Macro: Klick 1, danach je nach Modus Axt-Swap oder direkt das Web
+    private void begin(MinecraftClient mc, ClientPlayerEntity p, PlayerEntity t, boolean stunMode) {
+        busy = true;
+        restoring = false;
+        locked = t;
+        placed = 0;
+        aimTicks = 0;
+        stun = stunMode;
+        jitA = (rnd.nextDouble() - 0.5) * 0.5;
+        jitB = (rnd.nextDouble() - 0.5) * 0.5;
+        saveView(p);
+
+        // Klick 1: Schwert (oder das Item in der Hand, falls kein Schwert da ist)
+        int sword = findSwordSlot(p);
+        if (sword >= 0) {
+            returnSlot = sword;
+            p.getInventory().setSelectedSlot(sword);
+        } else {
+            returnSlot = p.getInventory().getSelectedSlot();
+        }
+        attack(mc, p, t);
+
+        if (stun) {
+            delay = rnd.nextInt(4) == 0 ? 2 : 1;   // meist 1 Tick, manchmal 2
+            phase = Phase.HIT2;
+        } else {
+            startWebPhase();
         }
     }
 
