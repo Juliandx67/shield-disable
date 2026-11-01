@@ -65,7 +65,14 @@ public class ShieldBreakerMod implements ClientModInitializer {
     }
 
     private void onTick(MinecraftClient client) {
-                if (StunWeb.busy) { previousSlot = -1; axeSlot = -1; waitTicks = 0; return; }
+        // Andere Macros haben Vorrang: dann hält der Shieldbreak still
+        if (StunWeb.busy || StunWeb.armed || StunSlam.busy || PearlCatch.busy || slamSituation(client)) {
+            previousSlot = -1;
+            axeSlot = -1;
+            waitTicks = 0;
+            return;
+        }
+
         ClientPlayerEntity player = client.player;
         if (!enabled || player == null || client.world == null
                 || client.interactionManager == null || client.currentScreen != null) {
@@ -115,5 +122,17 @@ public class ShieldBreakerMod implements ClientModInitializer {
             if (inv.getStack(i).isIn(ItemTags.AXES)) return i;
         }
         return -1;
+    }
+
+    // Du fällst mit Axt und Mace in der Hotbar: dann übernimmt der Stun Slam
+    private static boolean slamSituation(MinecraftClient c) {
+        ClientPlayerEntity p = c.player;
+        if (p == null || p.fallDistance <= 1.5) return false;
+        boolean mace = false, axe = false;
+        for (int i = 0; i < 9; i++) {
+            if (p.getInventory().getStack(i).isOf(net.minecraft.item.Items.MACE)) mace = true;
+            if (p.getInventory().getStack(i).isIn(ItemTags.AXES)) axe = true;
+        }
+        return mace && axe;
     }
 }
