@@ -8,7 +8,7 @@
   "license": "MIT",
   "environment": "client",
   "entrypoints": {
-    "client": ["dev.shieldbreaker.ShieldBreakerMod", "dev.shieldbreaker.StunSlam", "dev.shieldbreaker.StunWeb"]
+       "client": ["dev.shieldbreaker.ShieldBreakerMod", "dev.shieldbreaker.StunSlam", "dev.shieldbreaker.StunWeb", "dev.shieldbreaker.MaceTrigger"]
   },
   "depends": {
     "fabricloader": ">=0.18.0",
