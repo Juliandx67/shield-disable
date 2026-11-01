@@ -1,5 +1,6 @@
 package dev.shieldbreaker;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -20,10 +21,11 @@ import java.util.Random;
  * Triggerbot: Wenn du die Mace (oder das Schwert) in der Hand hast und den Gegner ansiehst,
  * schlägt die Mod automatisch zu, sobald der Angriff aufgeladen ist.
  *
- * Client-Command: /macetrigger         -> Mace-Trigger an/aus
- *                 /macetrigger sword   -> Schwert-Trigger an/aus
- *                 /macetrigger fall    -> Mace nur beim Fallen (Smash) an/aus
- *                 /macetrigger mobs    -> auch auf Mobs schlagen an/aus
+ * Client-Command: /macetrigger                 -> Mace-Trigger an/aus
+ *                 /macetrigger sword           -> Schwert-Trigger an/aus
+ *                 /macetrigger fall            -> Mace nur beim Fallen (Smash) an/aus
+ *                 /macetrigger mobs            -> auch auf Mobs schlagen an/aus
+ *                 /macetrigger charge <50-100> -> Mace schlägt ab so viel Prozent Aufladung
  */
 public class MaceTrigger implements ClientModInitializer {
 
@@ -31,13 +33,14 @@ public class MaceTrigger implements ClientModInitializer {
     private static boolean swordOn = false;
     private static boolean requireFall = true;
     private static boolean mobs = false;
+    private static int maceCharge = 95;             // Prozent Aufladung für die Mace
 
     private static final double MIN_FALL = 1.5;     // so viele Blöcke Fall für einen Smash-Schlag
-    private static final float MIN_CHARGE = 0.95f;  // so weit muss der Angriffsbalken geladen sein
 
     private final Random rnd = new Random();
     private int lastTargetId = -1;
     private int wait = 0;
+    private int jitter = -1;                        // -1 = noch nicht gewürfelt
 
     @Override
     public void onInitializeClient() {
@@ -65,6 +68,13 @@ public class MaceTrigger implements ClientModInitializer {
                     ctx.getSource().sendFeedback(Text.literal("Auch Mobs: " + (mobs ? "AN" : "AUS")));
                     return 1;
                 }))
+                .then(ClientCommandManager.literal("charge")
+                    .then(ClientCommandManager.argument("prozent", IntegerArgumentType.integer(50, 100))
+                        .executes(ctx -> {
+                            maceCharge = IntegerArgumentType.getInteger(ctx, "prozent");
+                            ctx.getSource().sendFeedback(Text.literal("Mace schlägt ab " + maceCharge + " % Aufladung"));
+                            return 1;
+                        })))
             )
         );
     }
@@ -74,13 +84,13 @@ public class MaceTrigger implements ClientModInitializer {
         if (p == null || mc.world == null
                 || mc.interactionManager == null || mc.currentScreen != null) return;
 
-        if (StunWeb.busy) { lastTargetId = -1; return; }
+        if (StunWeb.busy) { lastTargetId = -1; jitter = -1; return; }
 
         // Welche Waffe hast du in der Hand, und ist dafür der Trigger an?
         boolean holdingMace = p.getMainHandStack().isOf(Items.MACE);
         boolean holdingSword = p.getMainHandStack().isIn(ItemTags.SWORDS);
         boolean active = (holdingMace && maceOn) || (holdingSword && swordOn);
-        if (!active) { lastTargetId = -1; return; }
+        if (!active) { lastTargetId = -1; jitter = -1; return; }
 
         // Ziel am Fadenkreuz
         LivingEntity target = null;
@@ -90,22 +100,33 @@ public class MaceTrigger implements ClientModInitializer {
                 && !(le instanceof ArmorStandEntity)) {
             target = le;
         }
-        if (target == null || !target.isAlive()) { lastTargetId = -1; return; }
+        if (target == null || !target.isAlive()) { lastTargetId = -1; jitter = -1; return; }
 
-        if (target.isBlocking()) return;                                    // Schild: macht ShieldBreakerMod
+        if (target.isBlocking()) return;                                      // Schild: macht ShieldBreakerMod
         if (holdingMace && requireFall && p.fallDistance <= MIN_FALL) return; // kein Smash-Schlag möglich
 
-        // Kleine Reaktionszeit, wenn ein neues Ziel ins Fadenkreuz kommt
+        // Reaktionszeit nur, wenn ein neues Ziel ins Fadenkreuz kommt
         if (target.getId() != lastTargetId) {
             lastTargetId = target.getId();
-            wait = 1 + rnd.nextInt(2);
+            wait = holdingMace ? 1 + rnd.nextInt(2)          // Mace: 1-2 Ticks
+                               : (rnd.nextInt(3) == 0 ? 1 : 0); // Schwert: meist 0, manchmal 1 Tick
         }
         if (wait > 0) { wait--; return; }
 
-        if (p.getAttackCooldownProgress(0.5f) < MIN_CHARGE) return;
+        // Aufladung: Schwert muss voll sein (100 %), Mace nach deiner Einstellung
+        float need = holdingMace ? maceCharge / 100f : 1.0f;
+        if (p.getAttackCooldownProgress(0.5f) < need) return;
+
+        // Beim Schwert: in etwa einem von fünf Schlägen ein Tick Verzögerung
+        if (!holdingMace) {
+            if (jitter < 0) jitter = rnd.nextInt(5) == 0 ? 1 : 0;
+            if (jitter > 0) { jitter--; return; }
+            jitter = -1;
+        }
 
         mc.interactionManager.attackEntity(p, target);
         p.swingHand(Hand.MAIN_HAND);
-        wait = rnd.nextInt(2);   // 0-1 Tick Pause nach dem Schlag
+
+        wait = holdingMace ? rnd.nextInt(2) : 0;   // Schwert: keine Pause nach dem Schlag
     }
 }
